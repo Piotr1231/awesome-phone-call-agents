@@ -1,23 +1,27 @@
-name: Waitlist Slot Rescue live verification
+name: Waitlist Slot Rescue verification
 
 on:
   workflow_dispatch:
+    inputs:
+      place_live_call:
+        description: Place one separately authorized CALL-E call
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: waitlist-slot-rescue-live-verification
+  group: waitlist-slot-rescue-verification
   cancel-in-progress: false
 
 jobs:
-  verify-live-call:
+  verify:
     if: github.repository_owner == 'Piotr1231'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      CALLE_API_KEY: ${{ secrets.CALLE_API_KEY }}
-      TEST_PHONE: ${{ secrets.TEST_PHONE }}
       APP_DIR: apps/python/waitlist-slot-rescue
       REQUEST_FILE: /tmp/waitlist-live-request.json
       RESULT_FILE: /tmp/waitlist-live-result.json
@@ -43,8 +47,16 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
         run: uv run pytest -q
 
+      - name: Confirm no-call verification
+        if: ${{ !inputs.place_live_call }}
+        run: echo "Regression verification completed without placing a phone call."
+
       - name: Build one-recipient authorized demo request
+        if: ${{ inputs.place_live_call }}
         shell: bash
+        env:
+          TEST_PHONE: ${{ secrets.TEST_PHONE }}
+          TEST_LOCALE: ${{ vars.TEST_LOCALE || 'de-DE' }}
         run: |
           python - <<'PY'
           import json
@@ -56,6 +68,10 @@ jobs:
           phone = os.environ.get("TEST_PHONE", "")
           if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
               raise SystemExit("TEST_PHONE must be a valid E.164 number stored as a repository secret")
+
+          locale = os.environ.get("TEST_LOCALE", "")
+          if not re.fullmatch(r"[a-z]{2,3}(?:-[A-Z]{2})?", locale):
+              raise SystemExit("TEST_LOCALE must be a valid BCP 47 locale such as de-DE")
 
           now = datetime.now(timezone.utc)
           request = {
@@ -70,7 +86,7 @@ jobs:
                   "candidate_id": "authorized-demo-owner",
                   "phone": phone,
                   "position": 1,
-                  "locale": "en-US",
+                  "locale": locale,
                   "consented_to_waitlist_calls": True,
               }],
           }
@@ -78,7 +94,10 @@ jobs:
           PY
 
       - name: Place exactly one authorized CALL-E demo call
+        if: ${{ inputs.place_live_call }}
         working-directory: ${{ env.APP_DIR }}
+        env:
+          CALLE_API_KEY: ${{ secrets.CALLE_API_KEY }}
         run: |
           uv run python rescue.py \
             --request "$REQUEST_FILE" \
@@ -88,7 +107,7 @@ jobs:
             --output "$RESULT_FILE" >/dev/null
 
       - name: Print privacy-minimized verification result
-        if: always()
+        if: ${{ always() && inputs.place_live_call }}
         shell: bash
         run: |
           python - <<'PY'
@@ -108,12 +127,15 @@ jobs:
                   "status": result.get("status"),
                   "booking_created": result.get("booking_created"),
                   "human_confirmation_required": result.get("human_confirmation_required"),
+                  "human_review_required": result.get("human_review_required"),
                   "attempt_count": len(result.get("attempts", [])),
                   "attempts": [
                       {
                           "candidate_id": item.get("candidate_id"),
                           "phone": item.get("phone"),
                           "outcome": item.get("outcome"),
+                          "classification_reason": item.get("classification_reason"),
+                          "provider_diagnostics": item.get("provider_diagnostics"),
                       }
                       for item in result.get("attempts", [])
                   ],
@@ -123,5 +145,5 @@ jobs:
           PY
 
       - name: Remove temporary call files
-        if: always()
+        if: ${{ always() && inputs.place_live_call }}
         run: rm -f "$REQUEST_FILE" "$RESULT_FILE"
