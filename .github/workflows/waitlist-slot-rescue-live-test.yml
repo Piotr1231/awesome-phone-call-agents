@@ -19,8 +19,8 @@ jobs:
       CALLE_API_KEY: ${{ secrets.CALLE_API_KEY }}
       TEST_PHONE: ${{ secrets.TEST_PHONE }}
       APP_DIR: apps/python/waitlist-slot-rescue
-      REQUEST_FILE: ${{ runner.temp }}/waitlist-live-request.json
-      RESULT_FILE: ${{ runner.temp }}/waitlist-live-result.json
+      REQUEST_FILE: /tmp/waitlist-live-request.json
+      RESULT_FILE: /tmp/waitlist-live-result.json
 
     steps:
       - name: Check out the reviewed branch
